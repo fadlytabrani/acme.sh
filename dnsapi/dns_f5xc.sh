@@ -382,11 +382,8 @@ _validate_credentials() {
         return 1
     fi
     
-    # Validate client certificate if provided
+    # Check if client certificate exists and is readable (if provided)
     if [ -n "$F5XC_CLIENT_CERT" ]; then
-        _debug "Validating client certificate: $F5XC_CLIENT_CERT"
-        
-        # Check if certificate file exists and is readable
         if [ ! -f "$F5XC_CLIENT_CERT" ]; then
             _err "Client certificate file not found: $F5XC_CLIENT_CERT"
             return 1
@@ -397,32 +394,20 @@ _validate_credentials() {
             return 1
         fi
         
-        # Check if certificate password is provided
-        if [ -z "$F5XC_CERT_PASSWORD" ]; then
-            _err "Certificate password (F5XC_CERT_PASSWORD) is required for P12 certificates"
-            return 1
-        fi
-        
-        # Test certificate conversion to ensure it's valid
+        # Check if certificate password is provided for P12 certificates
         if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
-            _debug "Testing P12 certificate conversion"
-            test_pem=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
-            if [ $? -ne 0 ]; then
-                _err "Failed to convert P12 certificate - invalid certificate or password"
+            if [ -z "$F5XC_CERT_PASSWORD" ]; then
+                _err "Certificate password (F5XC_CERT_PASSWORD) is required for P12 certificates"
                 return 1
             fi
-            _debug "P12 certificate validation successful"
         fi
         
-        _debug "Certificate credentials validated successfully"
+        _debug "Client certificate file validated"
     elif [ -n "$F5XC_API_TOKEN" ]; then
-        # Fall back to API token authentication
         _debug "Using API token authentication"
     fi
     
     # Test the credentials by making an initial API call
-    _debug "Testing credentials with initial API call"
-    
     if ! _f5xc_fetch_domains; then
         _err "Failed to validate credentials - API call failed"
         return 1
