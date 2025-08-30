@@ -162,39 +162,6 @@ _get_root() {
     
     _debug "Finding root zone for: $fulldomain"
     
-    # First try to use cached domains for faster lookup
-    if [ -n "$_F5XC_CACHED_DOMAINS" ]; then
-        _debug "Using cached domains for root domain lookup"
-        
-        # Find the longest matching domain from cached list
-        longest_match=""
-        for domain in $_F5XC_CACHED_DOMAINS; do
-            if [[ "$fulldomain" == *".$domain" ]] || [[ "$fulldomain" == "$domain" ]]; then
-                if [ ${#domain} -gt ${#longest_match} ]; then
-                    longest_match="$domain"
-                fi
-            fi
-        done
-        
-        if [ -n "$longest_match" ]; then
-            _debug "Zone found in cache: $longest_match"
-            
-            # Extract subdomain (everything to the left of the zone)
-            subdomain=""
-            if [ "$longest_match" != "$fulldomain" ]; then
-                subdomain="${fulldomain%.$longest_match}"
-            fi
-            
-            _debug "Subdomain: $subdomain"
-            export _domain="$longest_match"
-            export _subdomain="$subdomain"
-            return 0
-        fi
-    fi
-    
-    # Fallback to API lookup if no cached domains or no match found
-    _debug "No cached domain match found, falling back to API lookup"
-    
     # Split domain into parts and try to find the zone
     domain="$fulldomain"
     
@@ -401,13 +368,30 @@ _modify_zone_with_text() {
 
 # Validate credentials early and set up cached certificate pair
 _validate_credentials() {
-    # Global variables for cached certificate data
-    export _F5XC_CACHED_CERT_FILE=""
-    export _F5XC_CACHED_CERT_PASSWORD=""
-    export _F5XC_AUTH_METHOD=""
-    export _F5XC_CACHED_DOMAINS=""
-    
     _debug "Validating F5 XC credentials"
+    
+    # Check if we already have cached data (persistent caching)
+    if [ -n "$_F5XC_CACHED_DOMAINS" ] && [ -n "$_F5XC_AUTH_METHOD" ] && [ -n "$_F5XC_CACHED_PEM_FILE" ]; then
+        _debug "Using existing cached credentials, domains, and PEM certificate"
+        return 0
+    fi
+    
+    # Initialize cache variables only if not already set
+    if [ -z "$_F5XC_CACHED_CERT_FILE" ]; then
+        export _F5XC_CACHED_CERT_FILE=""
+    fi
+    if [ -z "$_F5XC_CACHED_CERT_PASSWORD" ]; then
+        export _F5XC_CACHED_CERT_PASSWORD=""
+    fi
+    if [ -z "$_F5XC_AUTH_METHOD" ]; then
+        export _F5XC_AUTH_METHOD=""
+    fi
+    if [ -z "$_F5XC_CACHED_DOMAINS" ]; then
+        export _F5XC_CACHED_DOMAINS=""
+    fi
+    if [ -z "$_F5XC_CACHED_PEM_FILE" ]; then
+        export _F5XC_CACHED_PEM_FILE=""
+    fi
     
     # Check required environment variables
     if [ -z "$F5XC_TENANT" ]; then
@@ -442,17 +426,20 @@ _validate_credentials() {
             return 1
         fi
         
-        # Test certificate conversion to ensure it's valid
+        # Test certificate conversion to ensure it's valid and cache the PEM file
         if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
-            _debug "Testing P12 certificate conversion"
+            _debug "Testing P12 certificate conversion and caching PEM file"
             test_pem=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
             if [ $? -ne 0 ]; then
                 _err "Failed to convert P12 certificate - invalid certificate or password"
                 return 1
             fi
-            # Clean up test file
-            rm -f "$test_pem"
-            _debug "P12 certificate validation successful"
+            # Cache the PEM file for reuse
+            _F5XC_CACHED_PEM_FILE="$test_pem"
+            _debug "P12 certificate validation successful and PEM file cached"
+        else
+            # For non-P12 certificates, use the original file
+            _F5XC_CACHED_PEM_FILE="$F5XC_CLIENT_CERT"
         fi
         
         # Set up cached certificate data
@@ -560,14 +547,14 @@ _f5xc_rest() {
     
     # Check authentication method: Client certificates (preferred) or API token (fallback)
     if [ "$_F5XC_AUTH_METHOD" = "certificate" ]; then
-        # Use cached client certificate authentication
-        _debug "Using cached client certificate authentication"
+        # Use client certificate authentication
+        _debug "Using client certificate authentication"
         
         # Convert P12 to PEM for better compatibility with modern OpenSSL
-        cert_file="$_F5XC_CACHED_CERT_FILE"
-        if [ "$_F5XC_CACHED_CERT_FILE" != "${_F5XC_CACHED_CERT_FILE%.p12}" ] || [ "$_F5XC_CACHED_CERT_FILE" != "${_F5XC_CACHED_CERT_FILE%.pfx}" ]; then
+        cert_file="$F5XC_CLIENT_CERT"
+        if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
             _debug "Converting P12 certificate to PEM format"
-            cert_file=$(_convert_p12_to_pem "$_F5XC_CACHED_CERT_FILE" "$_F5XC_CACHED_CERT_PASSWORD")
+            cert_file=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
             if [ $? -ne 0 ]; then
                 _err "Failed to convert P12 certificate to PEM format"
                 return 1
