@@ -366,9 +366,9 @@ _modify_zone_with_text() {
 
 # Note: This plugin uses _readaccountconf_mutable which is an acme.sh internal function
 
-    # Validate configuration early
+    # Validate configuration files early
 _validate_config() {
-    _debug "Validating F5 XC configuration"
+    _debug "Validating F5 XC configuration files"
     
     # Check required environment variables
     if [ -z "$F5XC_TENANT" ]; then
@@ -405,12 +405,6 @@ _validate_config() {
         _debug "Client certificate file validated"
     elif [ -n "$F5XC_API_TOKEN" ]; then
         _debug "Using API token authentication"
-    fi
-    
-    # Test the configuration by making an initial API call
-    if ! _f5xc_fetch_domains; then
-        _err "Failed to validate configuration - API call failed"
-        return 1
     fi
     
     _debug "Configuration validated successfully"
