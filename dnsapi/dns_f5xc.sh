@@ -37,27 +37,8 @@ dns_f5xc_add() {
     F5XC_CLIENT_CERT="${F5XC_CLIENT_CERT:-$(_readaccountconf_mutable F5XC_CLIENT_CERT)}"
     F5XC_CERT_PASSWORD="${F5XC_CERT_PASSWORD:-$(_readaccountconf_mutable F5XC_CERT_PASSWORD)}"
     
-    # Debug: Show authentication method being used
-    if [ -n "$F5XC_CLIENT_CERT" ]; then
-        _debug "Using client certificate authentication"
-    else
-        _debug "Using API token authentication"
-    fi
-    
-    # Check required environment variables
-    if [ -z "$F5XC_TENANT" ]; then
-        _err "F5XC_TENANT is required"
-        return 1
-    fi
-    
-    # Check if we have either certificates or API token
-    if [ -z "$F5XC_CLIENT_CERT" ] && [ -z "$F5XC_API_TOKEN" ]; then
-        _err "Either F5XC_CLIENT_CERT or F5XC_API_TOKEN is required"
-        return 1
-    fi
-    
-    # Validate certificates if provided (moved here after config is read)
-    if ! _validate_certificates; then
+    # Validate credentials early and set up cached certificate data
+    if ! _validate_credentials; then
         return 1
     fi
     
@@ -122,27 +103,8 @@ dns_f5xc_rm() {
     F5XC_CLIENT_CERT="${F5XC_CLIENT_CERT:-$(_readaccountconf_mutable F5XC_CLIENT_CERT)}"
     F5XC_CERT_PASSWORD="${F5XC_CERT_PASSWORD:-$(_readaccountconf_mutable F5XC_CERT_PASSWORD)}"
     
-    # Debug: Show authentication method being used
-    if [ -n "$F5XC_CLIENT_CERT" ]; then
-        _debug "Using client certificate authentication"
-    else
-        _debug "Using API token authentication"
-    fi
-    
-    # Check required environment variables
-    if [ -z "$F5XC_TENANT" ]; then
-        _err "F5XC_TENANT is required"
-        return 1
-    fi
-    
-    # Check if we have either certificates or API token
-    if [ -z "$F5XC_CLIENT_CERT" ] && [ -z "$F5XC_API_TOKEN" ]; then
-        _err "Either F5XC_CLIENT_CERT or F5XC_API_TOKEN is required"
-        return 1
-    fi
-    
-    # Validate certificates if provided (moved here after config is read)
-    if ! _validate_certificates; then
+    # Validate credentials early and set up cached certificate data
+    if ! _validate_credentials; then
         return 1
     fi
 
@@ -404,47 +366,164 @@ _modify_zone_with_text() {
 
 # Note: This plugin uses _readaccountconf_mutable which is an acme.sh internal function
 
-# Validate certificate files if provided
-_validate_certificates() {
-    errors=0
+# Validate credentials early and set up cached certificate pair
+_validate_credentials() {
+    # Global variables for cached certificate data
+    export _F5XC_CACHED_CERT_FILE=""
+    export _F5XC_CACHED_CERT_PASSWORD=""
+    export _F5XC_AUTH_METHOD=""
     
-    # Debug: Show certificate validation status
-    if [ -n "$F5XC_CLIENT_CERT" ]; then
-        _debug "Validating client certificate: $F5XC_CLIENT_CERT"
+    _debug "Validating F5 XC credentials"
+    
+    # Check required environment variables
+    if [ -z "$F5XC_TENANT" ]; then
+        _err "F5XC_TENANT is required"
+        return 1
     fi
     
-    # Check if client certificate is specified
+    # Check if we have either certificates or API token
+    if [ -z "$F5XC_CLIENT_CERT" ] && [ -z "$F5XC_API_TOKEN" ]; then
+        _err "Either F5XC_CLIENT_CERT or F5XC_API_TOKEN is required"
+        return 1
+    fi
+    
+    # Validate client certificate if provided
     if [ -n "$F5XC_CLIENT_CERT" ]; then
+        _debug "Validating client certificate: $F5XC_CLIENT_CERT"
+        
+        # Check if certificate file exists and is readable
         if [ ! -f "$F5XC_CLIENT_CERT" ]; then
             _err "Client certificate file not found: $F5XC_CLIENT_CERT"
-            errors=$((errors + 1))
-        elif [ ! -r "$F5XC_CLIENT_CERT" ]; then
+            return 1
+        fi
+        
+        if [ ! -r "$F5XC_CLIENT_CERT" ]; then
             _err "Client certificate file not readable: $F5XC_CLIENT_CERT"
-            errors=$((errors + 1))
+            return 1
         fi
         
         # Check if certificate password is provided
         if [ -z "$F5XC_CERT_PASSWORD" ]; then
             _err "Certificate password (F5XC_CERT_PASSWORD) is required for P12 certificates"
-            errors=$((errors + 1))
+            return 1
         fi
-    fi
-    
-
-    
-    # Check if API token is available as fallback
-    if [ $errors -gt 0 ] && [ -z "$F5XC_API_TOKEN" ]; then
-        _err "Certificate validation failed and no API token available for fallback"
-        _err "Please fix certificate issues or provide F5XC_API_TOKEN"
-        return 1
-    fi
-    
-    if [ $errors -gt 0 ]; then
-        _info "Certificate validation failed, falling back to API token authentication"
+        
+        # Test certificate conversion to ensure it's valid
+        if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
+            _debug "Testing P12 certificate conversion"
+            test_pem=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
+            if [ $? -ne 0 ]; then
+                _err "Failed to convert P12 certificate - invalid certificate or password"
+                return 1
+            fi
+            # Clean up test file
+            rm -f "$test_pem"
+            _debug "P12 certificate validation successful"
+        fi
+        
+        # Set up cached certificate data
+        _F5XC_CACHED_CERT_FILE="$F5XC_CLIENT_CERT"
+        _F5XC_CACHED_CERT_PASSWORD="$F5XC_CERT_PASSWORD"
+        _F5XC_AUTH_METHOD="certificate"
+        
+        _debug "Certificate credentials validated and cached successfully"
         return 0
     fi
     
-    return 0
+    # Fall back to API token authentication
+    if [ -n "$F5XC_API_TOKEN" ]; then
+        _debug "Using API token authentication"
+        _F5XC_AUTH_METHOD="api_token"
+        return 0
+    fi
+    
+    # Should never reach here, but just in case
+    _err "No valid authentication method found"
+    return 1
+}
+
+# Validate credentials early and set up cached certificate pair
+_validate_credentials() {
+    # Global variables for cached certificate
+    export _F5XC_CACHED_CERT_FILE=""
+    export _F5XC_CACHED_CERT_PASSWORD=""
+    export _F5XC_AUTH_METHOD=""
+    
+    _debug "Validating F5 XC credentials"
+    
+    # Check required environment variables
+    if [ -z "$F5XC_TENANT" ]; then
+        _err "F5XC_TENANT is required"
+        return 1
+    fi
+    
+    # Check if we have either certificates or API token
+    if [ -z "$F5XC_CLIENT_CERT" ] && [ -z "$F5XC_API_TOKEN" ]; then
+        _err "Either F5XC_CLIENT_CERT or F5XC_API_TOKEN is required"
+        return 1
+    fi
+    
+    # Priority: Client certificate authentication (preferred)
+    if [ -n "$F5XC_CLIENT_CERT" ]; then
+        _debug "Setting up client certificate authentication"
+        
+        # Validate certificate file
+        if [ ! -f "$F5XC_CLIENT_CERT" ]; then
+            _err "Client certificate file not found: $F5XC_CLIENT_CERT"
+            return 1
+        fi
+        
+        if [ ! -r "$F5XC_CLIENT_CERT" ]; then
+            _err "Client certificate file not readable: $F5XC_CLIENT_CERT"
+            return 1
+        fi
+        
+        # Validate certificate password
+        if [ -z "$F5XC_CERT_PASSWORD" ]; then
+            _err "Certificate password (F5XC_CERT_PASSWORD) is required for P12 certificates"
+            return 1
+        fi
+        
+        # Test certificate conversion to ensure it's valid
+        if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
+            _debug "Testing P12 certificate conversion"
+            test_pem=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
+            if [ $? -ne 0 ]; then
+                _err "P12 certificate validation failed - invalid certificate or password"
+                return 1
+            fi
+            # Clean up test file
+            rm -f "$test_pem"
+            _debug "P12 certificate validation successful"
+        fi
+        
+        # Set up cached certificate for later use
+        _F5XC_CACHED_CERT_FILE="$F5XC_CLIENT_CERT"
+        _F5XC_CACHED_CERT_PASSWORD="$F5XC_CERT_PASSWORD"
+        _F5XC_AUTH_METHOD="certificate"
+        
+        _debug "Client certificate authentication configured successfully"
+        return 0
+        
+    # Fallback: API token authentication
+    elif [ -n "$F5XC_API_TOKEN" ]; then
+        _debug "Setting up API token authentication"
+        
+        # Basic API token validation (non-empty)
+        if [ -z "$F5XC_API_TOKEN" ]; then
+            _err "API token is empty"
+            return 1
+        fi
+        
+        _F5XC_AUTH_METHOD="api_token"
+        
+        _debug "API token authentication configured successfully"
+        return 0
+        
+    else
+        _err "No valid authentication method found"
+        return 1
+    fi
 }
 
 # F5 XC REST API helper function
@@ -461,17 +540,17 @@ _f5xc_rest() {
     _debug "API call: $method $path"
     
     # Check authentication method: Client certificates (preferred) or API token (fallback)
-    if [ -n "$F5XC_CLIENT_CERT" ] && [ -f "$F5XC_CLIENT_CERT" ] && [ -n "$F5XC_CERT_PASSWORD" ]; then
-        # Use client certificate authentication with P12 certificate
-        _debug "Using client certificate authentication"
+    if [ "$_F5XC_AUTH_METHOD" = "certificate" ]; then
+        # Use cached client certificate authentication
+        _debug "Using cached client certificate authentication"
         
         # Convert P12 to PEM for better compatibility with modern OpenSSL
-        cert_file="$F5XC_CLIENT_CERT"
-        if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
+        cert_file="$_F5XC_CACHED_CERT_FILE"
+        if [ "$_F5XC_CACHED_CERT_FILE" != "${_F5XC_CACHED_CERT_FILE%.p12}" ] || [ "$_F5XC_CACHED_CERT_FILE" != "${_F5XC_CACHED_CERT_FILE%.pfx}" ]; then
             _debug "Converting P12 certificate to PEM format"
-            cert_file=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
+            cert_file=$(_convert_p12_to_pem "$_F5XC_CACHED_CERT_FILE" "$_F5XC_CACHED_CERT_PASSWORD")
             if [ $? -ne 0 ]; then
-                _err "Failed to convert P12 certificate to PEM format, falling back to API token"
+                _err "Failed to convert P12 certificate to PEM format"
                 return 1
             fi
         fi
@@ -503,9 +582,9 @@ _f5xc_rest() {
             _debug "Cleaned up temporary PEM file"
         fi
         
-    else
-        # Use API token authentication with built-in functions
-        _debug "Using API token authentication with built-in functions"
+    elif [ "$_F5XC_AUTH_METHOD" = "api_token" ]; then
+        # Use cached API token authentication with built-in functions
+        _debug "Using cached API token authentication with built-in functions"
         
         # Set headers for built-in functions (export is required for built-in functions)
         export _H1="Authorization: APIToken $F5XC_API_TOKEN"
@@ -525,6 +604,9 @@ _f5xc_rest() {
             _debug "GET request using built-in _get function"
             response=$(_get "$full_url")
         fi
+    else
+        _err "No valid authentication method found - credentials not properly validated"
+        return 1
     fi
     
     if [ "$?" != "0" ]; then
