@@ -498,7 +498,7 @@ _f5xc_cache_domains() {
     
     # Extract domain names from the response and cache them
     if command -v jq >/dev/null 2>&1; then
-        _debug "Using jq for domain extraction"
+        _debug "Getting list of domains"
         
         # First, let's see the overall structure
         _debug "API response structure:"
