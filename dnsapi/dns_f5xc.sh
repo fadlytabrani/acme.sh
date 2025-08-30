@@ -37,8 +37,8 @@ dns_f5xc_add() {
     F5XC_CLIENT_CERT="${F5XC_CLIENT_CERT:-$(_readaccountconf_mutable F5XC_CLIENT_CERT)}"
     F5XC_CERT_PASSWORD="${F5XC_CERT_PASSWORD:-$(_readaccountconf_mutable F5XC_CERT_PASSWORD)}"
     
-    # Validate credentials early
-    if ! _validate_credentials; then
+    # Validate configuration early
+    if ! _validate_config; then
         return 1
     fi
     
@@ -103,8 +103,8 @@ dns_f5xc_rm() {
     F5XC_CLIENT_CERT="${F5XC_CLIENT_CERT:-$(_readaccountconf_mutable F5XC_CLIENT_CERT)}"
     F5XC_CERT_PASSWORD="${F5XC_CERT_PASSWORD:-$(_readaccountconf_mutable F5XC_CERT_PASSWORD)}"
     
-    # Validate credentials early
-    if ! _validate_credentials; then
+    # Validate configuration early
+    if ! _validate_config; then
         return 1
     fi
 
@@ -366,9 +366,9 @@ _modify_zone_with_text() {
 
 # Note: This plugin uses _readaccountconf_mutable which is an acme.sh internal function
 
-    # Validate credentials early
-_validate_credentials() {
-    _debug "Validating F5 XC credentials"
+    # Validate configuration early
+_validate_config() {
+    _debug "Validating F5 XC configuration"
     
     # Check required environment variables
     if [ -z "$F5XC_TENANT" ]; then
@@ -407,13 +407,13 @@ _validate_credentials() {
         _debug "Using API token authentication"
     fi
     
-    # Test the credentials by making an initial API call
+    # Test the configuration by making an initial API call
     if ! _f5xc_fetch_domains; then
-        _err "Failed to validate credentials - API call failed"
+        _err "Failed to validate configuration - API call failed"
         return 1
     fi
     
-    _debug "Credentials validated successfully"
+    _debug "Configuration validated successfully"
     return 0
 }
 
