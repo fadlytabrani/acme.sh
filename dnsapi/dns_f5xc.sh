@@ -492,19 +492,13 @@ _f5xc_cache_domains() {
     fi
     
     # Debug: Show the raw API response to understand the structure
-    _debug "Raw API response for DNS zones:"
-    _debug "Response length: $(echo "$_F5XC_LAST_RESPONSE" | wc -c) characters"
-    _debug "Response preview: $(echo "$_F5XC_LAST_RESPONSE" | head -c 500)..."
+
     
     # Extract domain names from the response and cache them
     if command -v jq >/dev/null 2>&1; then
         _debug "Getting list of domains"
         
-        # First, let's see the overall structure
-        _debug "API response structure:"
-        printf "%s" "$_F5XC_LAST_RESPONSE" | jq '.' 2>/dev/null | head -20 | while read line; do
-            _debug "  $line"
-        done
+
         
         # Try to extract domains from various possible paths
         domains_path1=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.name // empty' 2>/dev/null | tr '\n' ' ')
@@ -532,10 +526,6 @@ _f5xc_cache_domains() {
         fi
     else
         _debug "Using text processing (jq not available)"
-        _debug "Raw response for text processing:"
-        echo "$_F5XC_LAST_RESPONSE" | head -20 | while read line; do
-            _debug "  $line"
-        done
         
         # Fallback to text processing if jq is not available
         _F5XC_CACHED_DOMAINS=$(printf "%s" "$_F5XC_LAST_RESPONSE" | grep -o '"default_dns_zone_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"default_dns_zone_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/g' | tr '\n' ' ')
