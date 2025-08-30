@@ -42,10 +42,6 @@ dns_f5xc_add() {
         return 1
     fi
     
-
-    
-
-    
     _debug "Adding TXT record for $fulldomain"
     
     # Get root domain and subdomain
@@ -107,11 +103,7 @@ dns_f5xc_rm() {
     if ! _validate_config; then
         return 1
     fi
-
-
-
-
-
+    
     # Parse domain and subdomain
     if ! _get_root "$fulldomain"; then
         _err "invalid domain"
