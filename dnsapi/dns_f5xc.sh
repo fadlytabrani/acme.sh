@@ -483,11 +483,11 @@ _validate_credentials() {
 
 # Cache available domains from F5 XC
 _f5xc_cache_domains() {
-    _debug "Fetching and caching available domains from F5 XC"
+    _debug "Fetching and caching available domains from F5 XC using dns_domains endpoint"
     
-    # Make API call to get all DNS zones
-    if ! _f5xc_rest "GET" "/api/config/dns/namespaces/system/dns_zones"; then
-        _err "Failed to fetch DNS zones for domain caching"
+    # Make API call to get all DNS domains (simpler endpoint)
+    if ! _f5xc_rest "GET" "/api/config/namespaces/system/dns_domains"; then
+        _err "Failed to fetch DNS domains for caching"
         return 1
     fi
     
@@ -521,7 +521,7 @@ _f5xc_cache_domains() {
         fi
         
         if [ $? -ne 0 ]; then
-            _err "Failed to parse DNS zones response with jq"
+            _err "Failed to parse DNS domains response with jq"
             return 1
         fi
     else
@@ -536,7 +536,7 @@ _f5xc_cache_domains() {
     
     if [ -z "$_F5XC_CACHED_DOMAINS" ]; then
         _warn "No domains found in F5 XC - this might indicate a configuration issue"
-        _debug "This could mean: 1) No DNS zones configured, 2) Different JSON structure, 3) Empty tenant"
+        _debug "This could mean: 1) No DNS domains configured, 2) Different JSON structure, 3) Empty tenant"
         # Don't fail here as empty domains might be valid for new tenants
     else
         _debug "Successfully cached domains: $_F5XC_CACHED_DOMAINS"
