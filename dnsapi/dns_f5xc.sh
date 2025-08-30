@@ -370,7 +370,7 @@ _modify_zone_with_text() {
 _validate_credentials() {
     _debug "Validating F5 XC credentials"
     
-    # Check if we already have cached data (persistent caching)
+    # Check if we already have validated credentials
     if [ -n "$_F5XC_CACHED_DOMAINS" ] && [ -n "$_F5XC_AUTH_METHOD" ] && [ -n "$_F5XC_CACHED_PEM_FILE" ]; then
         _debug "Using existing cached credentials, domains, and PEM certificate"
         return 0
@@ -428,7 +428,7 @@ _validate_credentials() {
         
         # Test certificate conversion to ensure it's valid and cache the PEM file
         if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
-            _debug "Testing P12 certificate conversion and caching PEM file"
+            _debug "Testing P12 certificate conversion"
             test_pem=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
             if [ $? -ne 0 ]; then
                 _err "Failed to convert P12 certificate - invalid certificate or password"
@@ -470,11 +470,11 @@ _validate_credentials() {
 
 # Cache available domains from F5 XC
 _f5xc_cache_domains() {
-    _debug "Fetching and caching available domains from F5 XC using dns_zones endpoint"
+    _debug "Fetching available domains from F5 XC using dns_zones endpoint"
     
     # Make API call to get all DNS zones (this includes yunohave.com)
     if ! _f5xc_rest "GET" "/api/config/dns/namespaces/system/dns_zones"; then
-        _err "Failed to fetch DNS zones for caching"
+        _err "Failed to fetch DNS zones"
         return 1
     fi
     
@@ -526,7 +526,7 @@ _f5xc_cache_domains() {
         _debug "This could mean: 1) No DNS zones configured, 2) Different JSON structure, 3) Empty tenant"
         # Don't fail here as empty domains might be valid for new tenants
     else
-        _debug "Successfully cached domains: $_F5XC_CACHED_DOMAINS"
+        _debug "Successfully retrieved domains from F5 XC"
     fi
     
     return 0
