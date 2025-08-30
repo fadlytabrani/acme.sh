@@ -162,6 +162,39 @@ _get_root() {
     
     _debug "Finding root zone for: $fulldomain"
     
+    # First try to use cached domains for faster lookup
+    if [ -n "$_F5XC_CACHED_DOMAINS" ]; then
+        _debug "Using cached domains for root domain lookup"
+        
+        # Find the longest matching domain from cached list
+        longest_match=""
+        for domain in $_F5XC_CACHED_DOMAINS; do
+            if [[ "$fulldomain" == *".$domain" ]] || [[ "$fulldomain" == "$domain" ]]; then
+                if [ ${#domain} -gt ${#longest_match} ]; then
+                    longest_match="$domain"
+                fi
+            fi
+        done
+        
+        if [ -n "$longest_match" ]; then
+            _debug "Zone found in cache: $longest_match"
+            
+            # Extract subdomain (everything to the left of the zone)
+            subdomain=""
+            if [ "$longest_match" != "$fulldomain" ]; then
+                subdomain="${fulldomain%.$longest_match}"
+            fi
+            
+            _debug "Subdomain: $subdomain"
+            export _domain="$longest_match"
+            export _subdomain="$subdomain"
+            return 0
+        fi
+    fi
+    
+    # Fallback to API lookup if no cached domains or no match found
+    _debug "No cached domain match found, falling back to API lookup"
+    
     # Split domain into parts and try to find the zone
     domain="$fulldomain"
     
@@ -173,7 +206,7 @@ _get_root() {
         if _f5xc_rest "GET" "/api/config/dns/namespaces/$namespace/dns_zones/$domain" 2>/dev/null; then
             response="$_F5XC_LAST_RESPONSE"
             if echo "$response" | grep -q '"name":\s*"'"$domain"'"'; then
-                _debug "Zone found: $domain"
+                _debug "Zone found via API: $domain"
                 
                 # Extract subdomain (everything to the left of the zone)
                 subdomain=""
@@ -199,7 +232,7 @@ _get_root() {
         fi
     done
     
-            _debug "No zone found for: $fulldomain"
+    _debug "No zone found for: $fulldomain"
     return 1
 }
 
@@ -372,6 +405,7 @@ _validate_credentials() {
     export _F5XC_CACHED_CERT_FILE=""
     export _F5XC_CACHED_CERT_PASSWORD=""
     export _F5XC_AUTH_METHOD=""
+    export _F5XC_CACHED_DOMAINS=""
     
     _debug "Validating F5 XC credentials"
     
@@ -427,22 +461,108 @@ _validate_credentials() {
         _F5XC_AUTH_METHOD="certificate"
         
         _debug "Certificate credentials validated and cached successfully"
-        return 0
-    fi
-    
-    # Fall back to API token authentication
-    if [ -n "$F5XC_API_TOKEN" ]; then
+    elif [ -n "$F5XC_API_TOKEN" ]; then
+        # Fall back to API token authentication
         _debug "Using API token authentication"
         _F5XC_AUTH_METHOD="api_token"
-        return 0
     fi
     
-    # Should never reach here, but just in case
-    _err "No valid authentication method found"
-    return 1
+    # Now test the credentials by making an initial API call to cache available domains
+    _debug "Testing credentials with initial API call to cache available domains"
+    
+    if ! _f5xc_cache_domains; then
+        _err "Failed to validate credentials - API call failed"
+        return 1
+    fi
+    
+    _debug "Credentials validated successfully and domains cached"
+    return 0
 }
 
 
+
+# Cache available domains from F5 XC
+_f5xc_cache_domains() {
+    _debug "Fetching and caching available domains from F5 XC"
+    
+    # Make API call to get all DNS zones
+    if ! _f5xc_rest "GET" "/api/config/dns/namespaces/system/dns_zones"; then
+        _err "Failed to fetch DNS zones for domain caching"
+        return 1
+    fi
+    
+    # Debug: Show the raw API response to understand the structure
+    _debug "Raw API response for DNS zones:"
+    _debug "Response length: $(echo "$_F5XC_LAST_RESPONSE" | wc -c) characters"
+    _debug "Response preview: $(echo "$_F5XC_LAST_RESPONSE" | head -c 500)..."
+    
+    # Extract domain names from the response and cache them
+    if command -v jq >/dev/null 2>&1; then
+        _debug "Using jq for domain extraction"
+        
+        # Try different possible JSON paths for domain names
+        _debug "Attempting to extract domains using jq..."
+        
+        # First, let's see the overall structure
+        _debug "API response structure:"
+        printf "%s" "$_F5XC_LAST_RESPONSE" | jq '.' 2>/dev/null | head -20 | while read line; do
+            _debug "  $line"
+        done
+        
+        # Try to extract domains from various possible paths
+        domains_path1=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.name // empty' 2>/dev/null | tr '\n' ' ')
+        domains_path2=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.spec.primary.default_dns_zone_name // empty' 2>/dev/null | tr '\n' ' ')
+        domains_path3=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.spec.primary.dns_zone_name // empty' 2>/dev/null | tr '\n' ' ')
+        domains_path4=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.metadata.name // empty' 2>/dev/null | tr '\n' ' ')
+        domains_path5=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.spec.dns_zone_name // empty' 2>/dev/null | tr '\n' ' ')
+        
+        _debug "Domains from path1 (.items[].name): $domains_path1"
+        _debug "Domains from path2 (.items[].spec.primary.default_dns_zone_name): $domains_path2"
+        _debug "Domains from path3 (.items[].spec.primary.dns_zone_name): $domains_path3"
+        _debug "Domains from path4 (.items[].metadata.name): $domains_path4"
+        _debug "Domains from path5 (.items[].spec.dns_zone_name): $domains_path5"
+        
+        # Use the first non-empty result (prioritize the correct path)
+        if [ -n "$domains_path1" ]; then
+            _F5XC_CACHED_DOMAINS="$domains_path1"
+        elif [ -n "$domains_path2" ]; then
+            _F5XC_CACHED_DOMAINS="$domains_path2"
+        elif [ -n "$domains_path3" ]; then
+            _F5XC_CACHED_DOMAINS="$domains_path3"
+        elif [ -n "$domains_path4" ]; then
+            _F5XC_CACHED_DOMAINS="$domains_path4"
+        elif [ -n "$domains_path5" ]; then
+            _F5XC_CACHED_DOMAINS="$domains_path5"
+        fi
+        
+        if [ $? -ne 0 ]; then
+            _err "Failed to parse DNS zones response with jq"
+            return 1
+        fi
+    else
+        _debug "Using text processing (jq not available)"
+        _debug "Raw response for text processing:"
+        echo "$_F5XC_LAST_RESPONSE" | head -20 | while read line; do
+            _debug "  $line"
+        done
+        
+        # Fallback to text processing if jq is not available
+        _F5XC_CACHED_DOMAINS=$(printf "%s" "$_F5XC_LAST_RESPONSE" | grep -o '"default_dns_zone_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"default_dns_zone_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/g' | tr '\n' ' ')
+    fi
+    
+    # Clean up the cached domains (remove extra spaces and empty entries)
+    _F5XC_CACHED_DOMAINS=$(echo "$_F5XC_CACHED_DOMAINS" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+    
+    if [ -z "$_F5XC_CACHED_DOMAINS" ]; then
+        _warn "No domains found in F5 XC - this might indicate a configuration issue"
+        _debug "This could mean: 1) No DNS zones configured, 2) Different JSON structure, 3) Empty tenant"
+        # Don't fail here as empty domains might be valid for new tenants
+    else
+        _debug "Successfully cached domains: $_F5XC_CACHED_DOMAINS"
+    fi
+    
+    return 0
+}
 
 # F5 XC REST API helper function
 _f5xc_rest() {
