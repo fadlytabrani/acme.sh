@@ -37,7 +37,7 @@ dns_f5xc_add() {
     F5XC_CLIENT_CERT="${F5XC_CLIENT_CERT:-$(_readaccountconf_mutable F5XC_CLIENT_CERT)}"
     F5XC_CERT_PASSWORD="${F5XC_CERT_PASSWORD:-$(_readaccountconf_mutable F5XC_CERT_PASSWORD)}"
     
-    # Validate credentials early and set up cached certificate data
+    # Validate credentials early
     if ! _validate_credentials; then
         return 1
     fi
@@ -103,7 +103,7 @@ dns_f5xc_rm() {
     F5XC_CLIENT_CERT="${F5XC_CLIENT_CERT:-$(_readaccountconf_mutable F5XC_CLIENT_CERT)}"
     F5XC_CERT_PASSWORD="${F5XC_CERT_PASSWORD:-$(_readaccountconf_mutable F5XC_CERT_PASSWORD)}"
     
-    # Validate credentials early and set up cached certificate data
+    # Validate credentials early
     if ! _validate_credentials; then
         return 1
     fi
@@ -366,32 +366,9 @@ _modify_zone_with_text() {
 
 # Note: This plugin uses _readaccountconf_mutable which is an acme.sh internal function
 
-# Validate credentials early and set up cached certificate pair
+    # Validate credentials early
 _validate_credentials() {
     _debug "Validating F5 XC credentials"
-    
-    # Check if we already have validated credentials
-    if [ -n "$_F5XC_CACHED_DOMAINS" ] && [ -n "$_F5XC_AUTH_METHOD" ] && [ -n "$_F5XC_CACHED_PEM_FILE" ]; then
-        _debug "Using existing cached credentials, domains, and PEM certificate"
-        return 0
-    fi
-    
-    # Initialize cache variables only if not already set
-    if [ -z "$_F5XC_CACHED_CERT_FILE" ]; then
-        export _F5XC_CACHED_CERT_FILE=""
-    fi
-    if [ -z "$_F5XC_CACHED_CERT_PASSWORD" ]; then
-        export _F5XC_CACHED_CERT_PASSWORD=""
-    fi
-    if [ -z "$_F5XC_AUTH_METHOD" ]; then
-        export _F5XC_AUTH_METHOD=""
-    fi
-    if [ -z "$_F5XC_CACHED_DOMAINS" ]; then
-        export _F5XC_CACHED_DOMAINS=""
-    fi
-    if [ -z "$_F5XC_CACHED_PEM_FILE" ]; then
-        export _F5XC_CACHED_PEM_FILE=""
-    fi
     
     # Check required environment variables
     if [ -z "$F5XC_TENANT" ]; then
@@ -426,7 +403,7 @@ _validate_credentials() {
             return 1
         fi
         
-        # Test certificate conversion to ensure it's valid and cache the PEM file
+        # Test certificate conversion to ensure it's valid
         if [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.p12}" ] || [ "$F5XC_CLIENT_CERT" != "${F5XC_CLIENT_CERT%.pfx}" ]; then
             _debug "Testing P12 certificate conversion"
             test_pem=$(_convert_p12_to_pem "$F5XC_CLIENT_CERT" "$F5XC_CERT_PASSWORD")
@@ -434,42 +411,31 @@ _validate_credentials() {
                 _err "Failed to convert P12 certificate - invalid certificate or password"
                 return 1
             fi
-            # Cache the PEM file for reuse
-            _F5XC_CACHED_PEM_FILE="$test_pem"
-            _debug "P12 certificate validation successful and PEM file cached"
-        else
-            # For non-P12 certificates, use the original file
-            _F5XC_CACHED_PEM_FILE="$F5XC_CLIENT_CERT"
+            _debug "P12 certificate validation successful"
         fi
         
-        # Set up cached certificate data
-        _F5XC_CACHED_CERT_FILE="$F5XC_CLIENT_CERT"
-        _F5XC_CACHED_CERT_PASSWORD="$F5XC_CERT_PASSWORD"
-        _F5XC_AUTH_METHOD="certificate"
-        
-        _debug "Certificate credentials validated and cached successfully"
+        _debug "Certificate credentials validated successfully"
     elif [ -n "$F5XC_API_TOKEN" ]; then
         # Fall back to API token authentication
         _debug "Using API token authentication"
-        _F5XC_AUTH_METHOD="api_token"
     fi
     
-    # Now test the credentials by making an initial API call to cache available domains
-    _debug "Testing credentials with initial API call to cache available domains"
+    # Test the credentials by making an initial API call
+    _debug "Testing credentials with initial API call"
     
-    if ! _f5xc_cache_domains; then
+    if ! _f5xc_fetch_domains; then
         _err "Failed to validate credentials - API call failed"
         return 1
     fi
     
-    _debug "Credentials validated successfully and domains cached"
+    _debug "Credentials validated successfully"
     return 0
 }
 
 
 
-# Cache available domains from F5 XC
-_f5xc_cache_domains() {
+# Fetch available domains from F5 XC
+_f5xc_fetch_domains() {
     _debug "Fetching available domains from F5 XC using dns_zones endpoint"
     
     # Make API call to get all DNS zones (this includes yunohave.com)
@@ -481,11 +447,9 @@ _f5xc_cache_domains() {
     # Debug: Show the raw API response to understand the structure
 
     
-    # Extract domain names from the response and cache them
+    # Extract domain names from the response
     if command -v jq >/dev/null 2>&1; then
         _debug "Getting list of domains"
-        
-
         
         # Try to extract domains from various possible paths
         domains_path1=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.name // empty' 2>/dev/null | tr '\n' ' ')
@@ -494,17 +458,17 @@ _f5xc_cache_domains() {
         domains_path4=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.metadata.name // empty' 2>/dev/null | tr '\n' ' ')
         domains_path5=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.spec.dns_zone_name // empty' 2>/dev/null | tr '\n' ' ')
         
-        # Use the first non-empty result (prioritize the correct path)
+        # Check which paths found domains
         if [ -n "$domains_path1" ]; then
-            _F5XC_CACHED_DOMAINS="$domains_path1"
+            _debug "Found domains via path1: $domains_path1"
         elif [ -n "$domains_path2" ]; then
-            _F5XC_CACHED_DOMAINS="$domains_path2"
+            _debug "Found domains via path2: $domains_path2"
         elif [ -n "$domains_path3" ]; then
-            _F5XC_CACHED_DOMAINS="$domains_path3"
+            _debug "Found domains via path3: $domains_path3"
         elif [ -n "$domains_path4" ]; then
-            _F5XC_CACHED_DOMAINS="$domains_path4"
+            _debug "Found domains via path4: $domains_path4"
         elif [ -n "$domains_path5" ]; then
-            _F5XC_CACHED_DOMAINS="$domains_path5"
+            _debug "Found domains via path5: $domains_path5"
         fi
         
         if [ $? -ne 0 ]; then
@@ -515,13 +479,14 @@ _f5xc_cache_domains() {
         _debug "Using text processing (jq not available)"
         
         # Fallback to text processing if jq is not available
-        _F5XC_CACHED_DOMAINS=$(printf "%s" "$_F5XC_LAST_RESPONSE" | grep -o '"default_dns_zone_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"default_dns_zone_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/g' | tr '\n' ' ')
+        domains_found=$(printf "%s" "$_F5XC_LAST_RESPONSE" | grep -o '"default_dns_zone_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"default_dns_zone_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/g' | tr '\n' ' ')
+        if [ -n "$domains_found" ]; then
+            _debug "Found domains via text processing: $domains_found"
+        fi
     fi
     
-    # Clean up the cached domains (remove extra spaces and empty entries)
-    _F5XC_CACHED_DOMAINS=$(echo "$_F5XC_CACHED_DOMAINS" | tr -s ' ' | sed 's/^ *//;s/ *$//')
-    
-    if [ -z "$_F5XC_CACHED_DOMAINS" ]; then
+    # Check if we found any domains
+    if [ -z "$domains_path1" ] && [ -z "$domains_path2" ] && [ -z "$domains_path3" ] && [ -z "$domains_path4" ] && [ -z "$domains_path5" ] && [ -z "$domains_found" ]; then
         _warn "No domains found in F5 XC - this might indicate a configuration issue"
         _debug "This could mean: 1) No DNS zones configured, 2) Different JSON structure, 3) Empty tenant"
         # Don't fail here as empty domains might be valid for new tenants
@@ -546,7 +511,7 @@ _f5xc_rest() {
     _debug "API call: $method $path"
     
     # Check authentication method: Client certificates (preferred) or API token (fallback)
-    if [ "$_F5XC_AUTH_METHOD" = "certificate" ]; then
+    if [ -n "$F5XC_CLIENT_CERT" ]; then
         # Use client certificate authentication
         _debug "Using client certificate authentication"
         
@@ -588,9 +553,9 @@ _f5xc_rest() {
             _debug "Cleaned up temporary PEM file"
         fi
         
-    elif [ "$_F5XC_AUTH_METHOD" = "api_token" ]; then
-        # Use cached API token authentication with built-in functions
-        _debug "Using cached API token authentication with built-in functions"
+    elif [ -n "$F5XC_API_TOKEN" ]; then
+        # Use API token authentication with built-in functions
+        _debug "Using API token authentication with built-in functions"
         
         # Set headers for built-in functions (export is required for built-in functions)
         export _H1="Authorization: APIToken $F5XC_API_TOKEN"
