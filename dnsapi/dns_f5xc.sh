@@ -500,9 +500,6 @@ _f5xc_cache_domains() {
     if command -v jq >/dev/null 2>&1; then
         _debug "Using jq for domain extraction"
         
-        # Try different possible JSON paths for domain names
-        _debug "Attempting to extract domains using jq..."
-        
         # First, let's see the overall structure
         _debug "API response structure:"
         printf "%s" "$_F5XC_LAST_RESPONSE" | jq '.' 2>/dev/null | head -20 | while read line; do
@@ -515,12 +512,6 @@ _f5xc_cache_domains() {
         domains_path3=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.spec.primary.dns_zone_name // empty' 2>/dev/null | tr '\n' ' ')
         domains_path4=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.metadata.name // empty' 2>/dev/null | tr '\n' ' ')
         domains_path5=$(printf "%s" "$_F5XC_LAST_RESPONSE" | jq -r '.items[]?.spec.dns_zone_name // empty' 2>/dev/null | tr '\n' ' ')
-        
-        _debug "Domains from path1 (.items[].name): $domains_path1"
-        _debug "Domains from path2 (.items[].spec.primary.default_dns_zone_name): $domains_path2"
-        _debug "Domains from path3 (.items[].spec.primary.dns_zone_name): $domains_path3"
-        _debug "Domains from path4 (.items[].metadata.name): $domains_path4"
-        _debug "Domains from path5 (.items[].spec.dns_zone_name): $domains_path5"
         
         # Use the first non-empty result (prioritize the correct path)
         if [ -n "$domains_path1" ]; then
